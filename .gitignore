@@ -1,0 +1,30 @@
+# build outputs
+build/
+builddir/
+install/
+out/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+deprecated/
+subprojects/
+
+CMakeUserPresets.json
+
+# object / binary junk
+*.obj
+*.o
+*.exe
+*.dll
+*.a
+*.lib
+*.pdb
+
+# IDE
+.vs/
+.vscode/
+.idea/
