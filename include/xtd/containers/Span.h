@@ -135,8 +135,7 @@ namespace xtd::containers {
         template<ContiguousIteratorType IteratorT>
         constexpr Span(IteratorT begin, IteratorT end) noexcept : _begin(begin), _end(end) {}
     
-        template<ContiguousIteratorType IteratorT>
-        constexpr Span(ValueType begin, SizeType size) noexcept : _begin(begin), _end(begin + size) {}
+        constexpr Span(PointerType begin, SizeType size) noexcept : _begin(begin), _end(begin + size) {}
 
         constexpr inline ValueType& operator[](SizeType i) noexcept { return const_cast<ValueType&>(std::as_const(*this)[i]); }
         constexpr inline const ValueType& operator[](SizeType i) const noexcept {

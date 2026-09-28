@@ -8,9 +8,16 @@
 namespace xtd::debug {
     constexpr void alwaysVerify(bool expression, const char* exprString, const char* message, std::source_location loc = std::source_location::current()) {
         if(expression) return;
-        std::fprintf(stderr, "Runtime verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
-            exprString, loc.file_name(), loc.line(), loc.function_name(), message);
-        std::abort();
+        if (std::is_constant_evaluated()) {
+            throw;
+            // throw std::format("Compiletime verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
+            //     exprString, loc.file_name(), loc.line(), loc.function_name(), message);
+        }
+        else {
+            std::fprintf(stderr, "Runtime verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
+                exprString, loc.file_name(), loc.line(), loc.function_name(), message);
+            std::abort();
+        }
     }
 
     constexpr void require(bool expression, const char* exprString, const char* message, std::source_location loc = std::source_location::current()) {
@@ -22,9 +29,16 @@ namespace xtd::debug {
     constexpr void verify(bool expression, const char* exprString, const char* message, std::source_location loc = std::source_location::current()) {
 #ifndef NDEBUG
         if(expression) return;
-        std::fprintf(stderr, "Verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
-            exprString, loc.file_name(), loc.line(), loc.function_name(), message);
-        std::abort();
+        if (std::is_constant_evaluated()) {
+            throw;
+            // throw std::format("Compiletime verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
+            //     exprString, loc.file_name(), loc.line(), loc.function_name(), message);
+        }
+        else {
+            std::fprintf(stderr, "Verification \"%s\" failed at %s:%d in %s\n, \"%s\"", 
+                exprString, loc.file_name(), loc.line(), loc.function_name(), message);
+            std::abort();
+        }
 #endif
     }
 }

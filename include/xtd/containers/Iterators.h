@@ -53,7 +53,7 @@ namespace xtd::containers {
         }
 
         ContiguousIteratorBase operator+(SizeType val) const { return _data + val; }
-        ContiguousIteratorBase operator-(SizeType val) const { return _data + val; }
+        ContiguousIteratorBase operator-(SizeType val) const { return _data - val; }
 
         ContiguousIteratorBase operator+(const ContiguousIteratorBase& other) const { return _data + other.data(); }
         ContiguousIteratorBase operator-(const ContiguousIteratorBase& other) const { return _data - other.data(); }

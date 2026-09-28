@@ -5,6 +5,7 @@
 #include "xtd/containers/Traits.h"
 #include "xtd/containers/Iterators.h"
 #include "xtd/containers/Span.h"
+#include "xtd/utility/Traits.h"
 #include <concepts>
 #include <type_traits>
 #include <utility>
@@ -58,7 +59,7 @@ namespace xtd::containers {
         using SizeType = size_t;
         using PointerType = ValueType*;
         using PolicyType = Policy;
-        using Self = Vector<ValueType, PolicyType>;
+        
         using AllocatorType = typename PolicyType::Alloc;
         using GrowthType = typename PolicyType::Growth;
         using IteratorType = ContiguousIteratorBase<ValueType>;
@@ -67,17 +68,21 @@ namespace xtd::containers {
         using Self = Vector<ValueType, PolicyType>;
         using Base = SpanFunctions<Self, ValueType, SizeType, ConstIteratorType>;
 
+        struct Policy {
+            [[no_unique_address]] AllocatorType alloc;
+            [[no_unique_address]] GrowthType growth;
+        };
+
         struct RawParts {
             PointerType begin;
             PointerType end;
             PointerType cap;
 
-            [[no_unique_address]] AllocatorType alloc;
-            [[no_unique_address]] GrowthType growth;
+            [[no_unique_address]] Policy policy;
 
             void cleanup() {
                 for(auto* it = begin; it < end; ++it) it->~ValueType();
-                alloc.deallocate(begin);
+                policy.alloc.deallocate(begin);
             }
         };
 
@@ -86,34 +91,29 @@ namespace xtd::containers {
         PointerType _end;
         PointerType _cap;
 
-        [[no_unique_address]] AllocatorType _alloc;
-        [[no_unique_address]] GrowthType _growth;
+        [[no_unique_address]] Policy _policy;
 
     public:
-        Vector() requires(std::is_default_constructible_v<AllocatorType> && std::is_default_constructible_v<GrowthType>) 
-        : _alloc(AllocatorType()), _growth(GrowthType()) {
+        Vector() requires(std::is_default_constructible_v<Policy>) : _policy(Policy()) {
             init(alloc(0), 0, 0);
         }
 
-        template<xtd::allocators::AllocatorT A>
-        explicit Vector(A&& alloc) requires(std::is_default_constructible_v<GrowthType> && std::convertible_to<A, AllocatorType>) 
-        : _alloc(std::forward<A>(alloc)), _growth(GrowthType()) {
+        explicit Vector(Policy&& policy) : _policy(std::move(policy)) {
             init(alloc(0), 0, 0);
         }
 
-        template<typename G>
-        explicit Vector(G&& growth) requires(std::is_default_constructible_v<AllocatorType> && std::convertible_to<G, GrowthType>) 
-        : _alloc(AllocatorType()), _growth(std::forward<G>(growth)) {
-            init(alloc(0), 0, 0);
+        Vector(SizeType size) requires(std::is_default_constructible_v<Policy> && std::is_default_constructible_v<ValueType>) : _policy(Policy()) {
+            init(alloc(size), size, size);
+            for(auto it = _begin; it < _end; ++it) constructAt(it);
         }
 
-        template<typename A, typename G>
-        explicit Vector(A&& alloc, G&& growth) requires(std::convertible_to<A, AllocatorType> && std::convertible_to<G, GrowthType>)
-            : _alloc(std::forward<A>(alloc)), _growth(std::forward<G>(growth)) {
-            init(alloc(0), 0, 0);
+        explicit Vector(SizeType size, Policy&& policy) requires(std::is_default_constructible_v<ValueType>) : _policy(std::move(policy)) {
+            init(alloc(size), size, size);
+            for(auto it = _begin; it < _end; ++it) constructAt(it);
         }
 
-        Vector(const Vector& other) : _alloc(allocatorCopyConstruction(other.allocator())), _growth(growthCopyConstruction(other.growth())) {
+        Vector(const Vector& other) requires (std::is_copy_constructible_v<ValueType>)
+        : _policy({allocatorCopyConstruction(other._policy.alloc), growthCopyConstruction(other._policy.growth)}) {
             auto size = other.size();
             auto cap = other.capacity();
             init(alloc(size), size, cap);
@@ -121,8 +121,7 @@ namespace xtd::containers {
         }
 
         // The moved from allocator must have valid state
-        Vector(Vector&& other) requires (std::move_constructible<AllocatorType> && std::move_constructible<GrowthType>)
-        : _alloc(std::move(other.allocator())), _growth(std::move(other.growth())) {
+        Vector(Vector&& other) requires (std::move_constructible<Policy>) : _policy(std::move(other._policy)) {
             _begin = std::exchange(other._begin, other.alloc(0));
             _end = std::exchange(other._end, other._begin);
             _cap = std::exchange(other._cap, other._begin);
@@ -137,7 +136,7 @@ namespace xtd::containers {
             clearData();
             if(size > capacity()) {
                 dealloc();
-                auto cap = grow(capacity(), size);
+                auto cap = growSize(capacity(), size);
                 _begin = alloc(cap);
                 _cap = _begin + cap;
             }
@@ -149,14 +148,13 @@ namespace xtd::containers {
 
 
         // The moved from allocator must have valid state
-        Vector& operator=(Vector&& other) requires (std::is_move_assignable_v<AllocatorType> && std::is_move_assignable_v<GrowthType>) {
+        Vector& operator=(Vector&& other) requires (std::is_move_assignable_v<Policy>) {
             if(this == &other) return *this;
 
             clearData();
             dealloc();
 
-            _alloc = std::move(other.allocator());
-            _growth = std::move(other.growth());
+            _policy = std::move(other._policy);
 
             _begin = std::exchange(other._begin, other.alloc(0));
             _end = std::exchange(other._end, other._begin);
@@ -176,44 +174,28 @@ namespace xtd::containers {
             return _begin[i];
         }
 
-        RawParts release() requires (std::is_default_constructible_v<AllocatorType> && std::is_default_constructible_v<GrowthType>) {
-            return release(AllocatorType(), GrowthType());
-        }
-        RawParts release(AllocatorType&& alloc) requires (std::is_default_constructible_v<GrowthType>) {
-            return release(alloc, GrowthType());
-        }
-        RawParts release(GrowthType&& growth) requires (std::is_default_constructible_v<AllocatorType>) {
-            return release(AllocatorType(), growth);
+        RawParts release() requires (std::is_default_constructible_v<Policy>) {
+            return release(Policy());
         }
 
-        RawParts release(AllocatorType&& alloc, GrowthType&& growth) {
-            RawParts parts { _begin, _end, _cap, std::move(_alloc), std::move(_growth) };
-            _alloc = alloc;
-            _growth = growth;
+        RawParts release(Policy&& policy) {
+            RawParts parts { _begin, _end, _cap, std::move(_policy) };
+            _policy = policy;
             init(alloc(0), 0, 0);
             return parts;
         }
 
-        void assign(PointerType data, SizeType size) requires (std::is_default_constructible_v<AllocatorType> && std::is_default_constructible_v<GrowthType>) {
-            assign(data, size);
+        void assign(PointerType data, SizeType size) requires (std::is_default_constructible_v<Policy>) {
+            assign(data, size, Policy());
         }
 
-        void assign(PointerType data, SizeType size, AllocatorType&& alloc) requires (std::is_default_constructible_v<GrowthType>) {
-            assign(data, size, std::move(alloc), GrowthType());
-        }
-
-        void assign(PointerType data, SizeType size, GrowthType&& growth) requires (std::is_default_constructible_v<AllocatorType>) {
-            assign(data, size, AllocatorType(), std::move(growth));
-        }
-
-        void assign(PointerType data, SizeType size, AllocatorType&& alloc, GrowthType&& growth) {
+        void assign(PointerType data, SizeType size, Policy&& policy) {
             clear();
             dealloc();
             _begin = data;
             _end = _begin + size;
             _cap = _end;
-            _alloc = std::move(alloc);
-            _growth = std::move(growth);
+            _policy = std::move(policy);
         }
 
         inline IteratorType begin() { return IteratorType(_begin); }
@@ -234,11 +216,11 @@ namespace xtd::containers {
         ValueType& front() { return _begin[0]; }
         const ValueType& front() const { return _begin[0]; }
 
-        AllocatorType& allocator() { return _alloc; }
-        const AllocatorType& allocator() const { return _alloc; }
+        AllocatorType& allocator() { return _policy.alloc; }
+        const AllocatorType& allocator() const { return _policy.alloc; }
 
-        GrowthType& growth() { return _growth; }
-        const GrowthType& growth() const { return _growth; }
+        GrowthType& growth() { return _policy.growth; }
+        const GrowthType& growth() const { return _policy.growth; }
     
         void clear() {
             clearData();
@@ -247,7 +229,7 @@ namespace xtd::containers {
 
         template<typename... Args>
         IteratorType pushBack(Args&&... args) {
-            if(_end >= _cap) migrate(_growth.grow(capacity()), size());
+            if(_end >= _cap) migrate(_policy.growth.grow(size() + 1), size());
             ::new (_end) ValueType(std::forward<Args>(args)...);
             return IteratorType(_end++);
         }
@@ -260,7 +242,12 @@ namespace xtd::containers {
             return IteratorType(_end++);
         }
 
-        IteratorType popBack() { --_end; return IteratorType(_end - 1); }
+        IteratorType popBack() {
+            XTD_DEBUG_VERIFY(_end > _begin, "call to Vector::popBack with zero size");
+            _end->~ValueType(); 
+            --_end; 
+            return IteratorType(_end - 1); 
+        }
 
         IteratorType insert(IteratorType target, IteratorType b, IteratorType e) {
             auto cap = capacity();
@@ -269,21 +256,21 @@ namespace xtd::containers {
             auto ns = s + addition;
     
             if(cap <= ns) {
-                cap = grow(cap, ns);
+                cap = growSize(cap, ns);
                 auto newBegin = alloc(cap);
                 PointerType it = _begin;
                 PointerType newIt = newBegin;
                 for(; it < target; ++it, ++newIt) {
-                    ::new (newIt) ValueType(*it);
+                    constructAt(newIt, *it);
                     it->~ValueType();
                 }
                 
                 for(; b < e; ++b, ++newIt) {
-                    ::new (newIt) ValueType(*b);
+                    constructAt(newIt, *b);
                 }
 
                 for(; it < _end; ++it, ++newIt) {
-                    ::new (newIt) ValueType(*it);
+                    constructAt(newIt, *it);
                     it->~ValueType();
                 }
                 auto res = newBegin + target - _begin;
@@ -298,15 +285,15 @@ namespace xtd::containers {
                 PointerType itLast = itFirst + addition;
                 
                 for(; itLast >= _end; --itLast, --itFirst) {
-                    ::new (itLast) ValueType(*itFirst);
+                    constructAt(itLast, *itFirst);
                 }
                 for(; itFirst >= target; --itLast, --itFirst) {
                     itLast->~ValueType();
-                    ::new (itLast) ValueType(*itFirst);
+                    constructAt(itLast, *itFirst);
                 }
                 for(IteratorType src = e - 1; itLast >= target; --itLast, --src) {
                     itLast->~ValueType();
-                    ::new (itLast) ValueType(*src);
+                    constructAt(itLast, *src);
                 }
                 _end += addition;
             } else {
@@ -315,19 +302,49 @@ namespace xtd::containers {
                 PointerType itNewEnd = itFirst;
 
                 for(; itLast >= itNewEnd; --itLast, --itFirst) {
-                    ::new (itLast) ValueType(*itFirst);
+                    constructAt(itLast, *itFirst);
                 }
                 IteratorType src = e - 1;
                 for(; itLast >= _end; --itLast, --src) {
-                    ::new (itLast) ValueType(*src);
+                    constructAt(itLast, *src);
                 }
                 for(; itLast >= target; --itLast, --src) {
                     itLast->~ValueType();
-                    ::new (itLast) ValueType(*src);
+                    constructAt(itLast, *src);
                 }
                 _end += addition;
             }
             return target;
+        }
+
+        void resize(SizeType newSize) {
+            auto priorSize = size();
+            if(priorSize == newSize) return;
+            if(priorSize < newSize) grow(newSize);
+            if(priorSize > newSize) shrink(newSize);
+        }
+
+        void grow(SizeType newSize) {
+            auto priorCap = capacity();
+            if(priorCap >= newSize) {
+                for(auto it = _end; it < _begin + newSize; ++it) {
+                    ::new (it) ValueType();
+                }
+                _end = _begin + newSize;
+                return;
+            }
+            auto newCap = growSize(priorCap, newSize);
+            auto itNew = migrate(newCap, newSize);
+            for(; itNew < _end; ++itNew) {
+                ::new (itNew) ValueType();
+            }
+        }
+
+        void shrink(SizeType newSize) {
+            auto newEnd = _begin + newSize;
+            for(auto it = newEnd; it < _end; ++it) it->~ValueType();
+            _end = newEnd;
+            return;
         }
 
     private:
@@ -337,25 +354,26 @@ namespace xtd::containers {
             _cap = _begin + cap;
         }
         inline PointerType alloc(SizeType size) {
-            return reinterpret_cast<PointerType>(_alloc.allocate(size * sizeof(ValueType), alignof(ValueType)));
+            return reinterpret_cast<PointerType>(_policy.alloc.allocate(size * sizeof(ValueType), alignof(ValueType)));
         }
         inline void dealloc() {
-            return _alloc.deallocate(_begin, size() * sizeof(ValueType), alignof(ValueType));
+            return _policy.alloc.deallocate(_begin, size() * sizeof(ValueType), alignof(ValueType));
         }
-        inline SizeType grow(SizeType current, SizeType req) {
-            while(current < req) current = _growth.grow(current);
+        inline SizeType growSize(SizeType current, SizeType req) {
+            while(current < req) current = _policy.growth.grow(current);
             return current;
         }
-        inline void migrate(SizeType cap, SizeType s) {
+        inline auto migrate(SizeType cap, SizeType s) {
             auto newBegin = alloc(cap);
             PointerType itNew = newBegin;
             PointerType it = _begin;
             for(; it < _end; ++it, ++itNew) {
-                ::new (itNew) ValueType(*it);
+                constructAt(itNew, *it);
                 it->~ValueType();
             }
             dealloc();
             init(newBegin, s, cap);
+            return itNew;
         }
 
         inline void clearData() {
@@ -397,6 +415,21 @@ namespace xtd::containers {
                 static_assert(false, "GrowthType is not copy constructible and doesn't implement onCopyConstruction method");
             }
         }
+
+        template<typename Dst, typename Src>
+            requires std::is_constructible_v<Dst, const Src&> ||
+                    std::is_constructible_v<Dst, Src&&>
+        void constructAt(Dst* dst, Src& src) {
+            if constexpr (std::is_constructible_v<Dst, Src&&>) {
+                ::new (dst) Dst(std::move(src));
+            }
+            else if constexpr (std::is_constructible_v<Dst, const Src&>) {
+                ::new (dst) Dst(src);
+            }
+        }
+
+        template<typename Dst> requires(std::is_default_constructible_v<Dst>)
+        void constructAt(Dst* dst) { ::new (dst) Dst(); }
     };
 
     static_assert(VectorContainerType<Vector<int>>, "Vector must satisfy ContiguousContainerType");

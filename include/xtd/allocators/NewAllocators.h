@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <stdint.h>
 #include <new>
 #include <utility>
@@ -67,4 +68,8 @@ namespace xtd::allocators {
     static_assert(TypedAllocatorT<TypedAllocatorNew>);
     static_assert(TypedDeallocatorT<TypedArrayDeallocatorNew>);
     static_assert(TypedArrayAllocatorT<TypedArrayAllocatorNew>);
+
+    // struct PolymorphicAllocatorBase {
+        
+    // }
 }
