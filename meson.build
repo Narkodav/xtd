@@ -12,6 +12,7 @@ xtd_headers = files(
     'include/xtd/containers/Vector.h',
     'include/xtd/containers/Span.h',
     'include/xtd/containers/Iterators.h',
+    'include/xtd/containers/ByteArray.h',
 
     # memory
     'include/xtd/memory/Traits.h',

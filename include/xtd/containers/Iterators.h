@@ -13,7 +13,7 @@ namespace xtd::containers {
         using Self = ContiguousIteratorBase<ValueType>;
 
     protected:
-        T* _data;
+        PointerType _data;
     public:
         constexpr ContiguousIteratorBase() = default;
         constexpr ~ContiguousIteratorBase() noexcept = default;
@@ -22,9 +22,9 @@ namespace xtd::containers {
         constexpr ContiguousIteratorBase& operator=(const ContiguousIteratorBase&) noexcept = default;
         constexpr ContiguousIteratorBase& operator=(ContiguousIteratorBase&&) noexcept = default;
 
-        constexpr ContiguousIteratorBase(T* data) : _data(data) {};
-        operator T*() { return _data; }
-        operator const T*() const { return _data; }
+        constexpr ContiguousIteratorBase(PointerType data) : _data(data) {};
+        operator PointerType() { return _data; }
+        operator const PointerType() const { return _data; }
 
         PointerType data() { return _data; }
         const PointerType data() const { return _data; }

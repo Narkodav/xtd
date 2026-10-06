@@ -11,20 +11,21 @@
 #include <utility>
 
 namespace xtd::containers {
-    template<typename T, size_t _size>
-    class Array : public SpanFunctions<Array<T, _size>, T, size_t, ContiguousIteratorBase<const T>> {
+    template<typename T, size_t _size, size_t _alignment = alignof(T)>
+    class Array : public SpanFunctions<Array<T, _size, _alignment>, T, size_t, ContiguousIteratorBase<const T>> {
     public:
+        static_assert(_alignment != 0 && (_alignment & (_alignment - 1)) == 0, "Alignment must be a power of two");
         using ValueType = T;
         using SizeType = size_t;
         using PointerType = ValueType*;
         using IteratorType = ContiguousIteratorBase<ValueType>;
         using ConstIteratorType = ContiguousIteratorBase<const ValueType>;
 
-        using Self = Array<ValueType, _size>;
+        using Self = Array<ValueType, _size, _alignment>;
         using Base = SpanFunctions<Self, ValueType, SizeType, ConstIteratorType>;
 
     private:
-        T _data[_size];
+        alignas(_alignment) T _data[_size];
 
     public:
         constexpr Array() noexcept = default;
@@ -85,5 +86,3 @@ namespace xtd::containers {
 
     static_assert(ArrayContainerType<Array<int, 1>>, "Array must satisfy ArrayContainerType");
 }
-
-

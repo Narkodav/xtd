@@ -18,54 +18,74 @@ class UintTest : public ::testing::Test {};
 // ---------------------------------------------------------------------
 
 TEST_F(UintTest, BasicFunctionality_ShiftLeft) {
-    UintImpl<8, uint8_t> n1 = std::numeric_limits<uint64_t>::max();
-    uint64_t n2 = std::numeric_limits<uint64_t>::max();
+    size_t i = 1;
+    for(; i < 64; ++i) {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_u256;
+        shiftLeft(n, i);
 
-    for(size_t i = 0; i < 64; ++i) {
-        n1 = std::numeric_limits<uint64_t>::max();
-        n2 = std::numeric_limits<uint64_t>::max();
-        shiftLeft(n1, i);
-        n2 <<= i;
+        EXPECT_EQ(n[0], std::numeric_limits<uint64_t>::max() << i) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max() >> (64 - i)) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], 0) << "Mismatch at shift " << i;
+    }
+    {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_u256;
+        shiftLeft(n, i);
 
-        for(size_t j = 0; j < n1.size(); ++j) {
-            EXPECT_EQ(n1[j], (n2 & (static_cast<uint64_t>(std::numeric_limits<uint8_t>::max()) << (8 * j))) >> (8 * j))
-                << "Mismatch at shift " << i;
-        }
+        EXPECT_EQ(n[0], 0) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], 0) << "Mismatch at shift " << i;
+        ++i;
+    }
+    for(; i < 128; ++i) {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_u256;
+        shiftLeft(n, i);
+
+        EXPECT_EQ(n[0], 0) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max() << (i - 64)) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], std::numeric_limits<uint64_t>::max() >> (128 - i)) << "Mismatch at shift " << i;
     }
 }
 
 TEST_F(UintTest, BasicFunctionality_ShiftRight) {
-    UintImpl<8, uint8_t> n1 = std::numeric_limits<uint64_t>::max();
-    uint64_t n2 = std::numeric_limits<uint64_t>::max();
+    size_t i = 1;
+    for(; i < 64; ++i) {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000_u256;
+        shiftRight(n, i);
 
-    for(size_t i = 0; i < 64; ++i) {
-        n1 = std::numeric_limits<uint64_t>::max();
-        n2 = std::numeric_limits<uint64_t>::max();
-        shiftRight(n1, i);
-        n2 >>= i;
+        EXPECT_EQ(n[0], 0) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max() << (64 - i)) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], std::numeric_limits<uint64_t>::max() >> i) << "Mismatch at shift " << i;
+    }
+    {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000_u256;
+        shiftRight(n, i);
 
-        for(size_t j = 0; j < n1.size(); ++j) {
-            EXPECT_EQ(n1[j], (n2 & (static_cast<uint64_t>(std::numeric_limits<uint8_t>::max()) << (8 * j))) >> (8 * j))
-                << "Mismatch at shift " << i;
-        }
+        EXPECT_EQ(n[0], 0) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], 0) << "Mismatch at shift " << i;
+        ++i;
+    }
+    for(; i < 128; ++i) {
+        auto n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000_u256;
+        shiftRight(n, i);
+
+        EXPECT_EQ(n[0], std::numeric_limits<uint64_t>::max() << (128 - i)) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[1], std::numeric_limits<uint64_t>::max()) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[2], std::numeric_limits<uint64_t>::max() >> (i - 64)) << "Mismatch at shift " << i;
+        EXPECT_EQ(n[3], 0) << "Mismatch at shift " << i;
     }
 }
 
 TEST_F(UintTest, BasicFunctionality_Add) {
-    UintImpl<4, uint64_t> l = std::numeric_limits<uint64_t>::max();
-    UintImpl<4, uint64_t> r = std::numeric_limits<uint64_t>::max();
-
-    for(size_t i = 0; i < 64; ++i) {
-        n1 = std::numeric_limits<uint64_t>::max();
-        n2 = std::numeric_limits<uint64_t>::max();
-        shiftRight(n1, i);
-        n2 >>= i;
-
-        for(size_t j = 0; j < n1.size(); ++j) {
-            EXPECT_EQ(n1[j], (n2 & (static_cast<uint64_t>(std::numeric_limits<uint8_t>::max()) << (8 * j))) >> (8 * j))
-                << "Mismatch at shift " << i;
-        }
-    }
+    auto l = 0x0000000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_u;
+    auto r = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000_u;
+    auto res = add(l , r).first;
+    EXPECT_EQ(res, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_u);
 }
 
 } // namespace

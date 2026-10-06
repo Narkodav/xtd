@@ -7,23 +7,225 @@
 #include <utility>
 #include <iostream>
 
-#include "xtd/containers/Array.h"
+#include "xtd/containers/String.h"
 #include "xtd/math/Utilities.h"
+
+#include "xtd/containers/ByteArray.h"
 
 // Intrinsic like helpers
 namespace xtd::math {
+
     template<typename Derived>
-	class UintBase {
+	class StaticBigNumBase {
     public:
 		Derived& derived() { return *static_cast<Derived*>(this); }
 		const Derived& derived() const { return *static_cast<const Derived*>(this); }
 	};
 
-	
+    template<typename Derived>
+	class BigIntBase : public StaticBigNumBase<Derived> {};
+
+    template<typename Derived>
+	class BigUintBase : public StaticBigNumBase<Derived> {};
+
+	template<char... Cs>
+	constexpr size_t deduceByteSize() {
+		// count significant digits (skip leading zeros and ' separators)
+		// hex: 4 bits/digit, binary: 1, octal: 3
+		// decimal: digits * 3322 / 1000 + 1   (log2(10) ~ 3.3219, rounded up)
+		// then round up to a multiple of your word size
+		char chars[] = { Cs... };
+		if(sizeof...(Cs) <= 2) return 1;
+		else if(chars[0] == '0' && chars[1] == 'b') {
+			size_t digitCount = 0;
+			size_t i = 2;
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] == '1') break;
+			}
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] >= '0' && chars[i] <= '1') ++digitCount;
+			}
+			return (xtd::utility::alignNextPowerOf2(digitCount) - 1) / 8 + 1;
+		}
+		else if(chars[0] == '0' && chars[1] == 'x') {
+			size_t digitCount = 0;
+			size_t i = 2;
+			for(; i < (sizeof...(Cs)); ++i) {
+				if((chars[i] > '0' && chars[i] <= '9') || (chars[i] >= 'A' && chars[i] <= 'F')|| (chars[i] >= 'a' && chars[i] <= 'f')) break;
+			}
+			for(; i < (sizeof...(Cs)); ++i) {
+				if((chars[i] >= '0' && chars[i] <= '7') || (chars[i] >= 'A' && chars[i] <= 'F')|| (chars[i] >= 'a' && chars[i] <= 'f')) ++digitCount;
+			}
+			return (xtd::utility::alignNextPowerOf2(digitCount * 4) - 1) / 8 + 1;
+		}
+		else if(chars[0] == '0' && chars[1] == 'o') {
+			size_t digitCount = 0;
+			size_t i = 2;
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] > '0' && chars[i] <= '7') break;
+			}
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] >= '0' && chars[i] <= '7') ++digitCount;
+			}
+			return (xtd::utility::alignNextPowerOf2(digitCount * 3) - 1) / 8 + 1;
+		}
+		else {
+			size_t digitCount = 0;
+			size_t i;
+			if(chars[0] == '0' && chars[1] == 'd') i = 2;
+			else i = 0;
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] > '0' && chars[i] <= '9') break;
+			}
+			for(; i < (sizeof...(Cs)); ++i) {
+				if(chars[i] >= '0' && chars[i] <= '9') ++digitCount;
+			}
+			return (xtd::utility::alignNextPowerOf2(digitCount * 3322 / 1000 + 1) - 1) / 8 + 1;
+		}
+	};
+
+	constexpr bool validateHex(char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); }
+	constexpr bool validateDec(char c) { return c >= '0' && c <= '9'; }
+	constexpr bool validateOct(char c) { return c >= '0' && c <= '8'; }
+	constexpr bool validateBin(char c) { return c >= '0' && c <= '1'; }
+
+	constexpr uint8_t getHex(char c) { 
+		if(c >= '0' && c <= '9') return c - '0';
+		else if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+		else return c - 'a' + 10;
+	}
+	constexpr uint8_t getDec(char c) { return c - '0'; }
+	constexpr uint8_t getOct(char c) { return c - '0'; }
+	constexpr uint8_t getBin(char c) { return c - '0'; }
+
+	template<size_t multiplier, bool sign, typename DigitValidateFunc, typename GetDigitFunc, typename Num>
+	constexpr void stringToIntParseLoop(xtd::containers::StringView str, Num& num, DigitValidateFunc&& validate, GetDigitFunc&& getDigit) {
+		using ValueType = typename Num::ValueType;
+		while((str.front() == '0' || str.front() == '\'') && str.size() > 0) {
+			if (!validate(str.front())) throw "invalid digit";
+			str = str.subspan(str.begin() + 1, str.end());
+		}
+		if(str.size() == 0) return;
+		{
+			ValueType digit = getDigit(str.front());
+			if constexpr (sign == true) { num = add(num, digit).first; }
+			else { num = subtract(num, digit).first; }
+			str = str.subspan(str.begin() + 1, str.end());
+		}
+		while(str.front() != '\0' && str.size() > 0) {
+			if (str.front() == '\'') continue;
+			ValueType digit = getDigit(str.front());
+			num = multiply(num, multiplier).first;
+			if constexpr (sign == true) { num = add(num, digit).first; }
+			else { num = subtract(num, digit).first; }
+			str = str.subspan(str.begin() + 1, str.end());
+		}
+	}
+
+	template<typename Num>
+	constexpr void stringToInt(xtd::containers::StringView str, StaticBigNumBase<Num>& num) {
+		auto& numDer = num.derived();
+		numDer = {};
+
+		if(str.front() == '-') {
+			str = str.subspan(str.begin() + 1, str.end());
+			if(str.size() <= 2) {
+				stringToIntParseLoop<10, false>(str, numDer, validateDec, getDec);
+			}
+			else {
+				if(str[0] == '0' && str[1] == 'b') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<2, false>(str, numDer, validateBin, getBin);
+				}
+				else if(str[0] == '0' && str[1] == 'o') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<8, false>(str, numDer, validateOct, getOct);
+				}
+				else if(str[0] == '0' && str[1] == 'd') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<10, false>(str, numDer, validateDec, getDec);
+				}
+				else if(str[0] == '0' && str[1] == 'x') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<16, false>(str, numDer, validateHex, getHex);
+				}
+				else {
+					stringToIntParseLoop<10, false>(str, numDer, validateDec, getDec);
+				}
+			}
+		}
+		else {
+			if(str.front() == '+') {
+				str = str.subspan(str.begin() + 1, str.end());
+			}
+
+			if(str.size() <= 2) {
+				stringToIntParseLoop<10, true>(str, numDer, validateDec, getDec);
+			}
+			else {
+				if(str[0] == '0' && str[1] == 'b') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<2, true>(str, numDer, validateBin, getBin);
+				}
+				else if(str[0] == '0' && str[1] == 'o') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<8, true>(str, numDer, validateOct, getOct);
+				}
+				else if(str[0] == '0' && str[1] == 'd') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<10, true>(str, numDer, validateDec, getDec);
+				}
+				else if(str[0] == '0' && str[1] == 'x') {
+					str = str.subspan(str.begin() + 2, str.end());
+					stringToIntParseLoop<16, true>(str, numDer, validateHex, getHex);
+				}
+				else {
+					stringToIntParseLoop<10, true>(str, numDer, validateDec, getDec);
+				}
+			}
+		}
+	}
+
+	template<typename Num, char... Cs>
+	constexpr void stringToInt(StaticBigNumBase<Num>& num) {
+		char chars[] = { Cs..., '\0' };
+		stringToInt(chars, num);
+	}
+
+	template<typename Num, char... Cs>
+	constexpr auto stringToInt() {
+		Num num;
+		stringToInt<Num, Cs...>(num);
+		return num;
+	}
+
+    template<typename Dst, typename Src>
+    constexpr void convertNum(BigUintBase<Dst>& dst, const BigUintBase<Src>& src) {
+		static_assert(std::endian::native == std::endian::little, "convertNum: byte-copy path assumes a little-endian target");
+		static_assert(Src::byteCount() <= Dst::byteCount(), "convertNum: source is larger than destination");
+
+		if constexpr (Dst::byteCount() > Src::byteCount()) {
+			dst.derived().limbs() = {};   // zero the high limbs before copying in the low ones
+		}
+		xtd::utility::copy(static_cast<const uint8_t*>(src.derived().data()), static_cast<const uint8_t*>(src.derived().data()) + Src::byteCount(),
+			static_cast<uint8_t*>(dst.derived().data()));
+    }
+
+    template<typename Dst, typename Src>
+    constexpr void convertNum(BigUintBase<Dst>& dst, const Src& src) {
+		static_assert(std::endian::native == std::endian::little, "convertNum: byte-copy path assumes a little-endian target");
+		static_assert(sizeof(Src) <= Dst::byteCount(), "convertNum: source is larger than destination");
+
+		if constexpr (Dst::byteCount() > sizeof(Src)) {
+			dst.derived().limbs() = {};   // zero the high limbs before copying in the low ones
+		}
+		xtd::utility::copy(static_cast<const uint8_t*>(&src), static_cast<const uint8_t*>(&src) + sizeof(Src),
+			static_cast<uint8_t*>(dst.derived().data()));
+    }
 
 	// Shifting by a number greater than the bit count is UB, mirroring the c++ convention
 	template<typename Num>
-	void shiftLeft(UintBase<Num>& val, uint64_t shift)
+	constexpr void shiftLeft(StaticBigNumBase<Num>& val, uint64_t shift)
 	{
         auto& derVal = val.derived();
         if constexpr (Num::size() == 1) {
@@ -33,22 +235,27 @@ namespace xtd::math {
             if (shift == 0) return;
             auto limbShift = shift / Num::limbBitSize();
             auto bitShift = shift % Num::limbBitSize();
-            auto it = derVal.end() - 1;
-            for(; it >= derVal.begin() + limbShift + 1; --it) {
-                auto correspond = it - limbShift;
-                *it = *correspond << bitShift;
-                *it |= *(correspond - 1) >> (Num::limbBitSize() - bitShift);
-            }
-            auto correspond = it - limbShift;
-            *it = *correspond << bitShift;
-            --it;
-            for(; it >= derVal.begin(); --it)*it = 0;
+			auto it = derVal.end() - 1;
+			if(bitShift == 0) {
+				for(; it >= derVal.begin() + limbShift; --it) *it = *(it - limbShift);
+			}
+			else {
+				for(; it >= derVal.begin() + limbShift + 1; --it) {
+					auto correspond = it - limbShift;
+					*it = *correspond << bitShift;
+					*it |= *(correspond - 1) >> (Num::limbBitSize() - bitShift);
+				}
+				auto correspond = it - limbShift;
+				*it = *correspond << bitShift;
+				--it;
+			}
+            for(; it >= derVal.begin(); --it) *it = 0;
         }
 	}
 
 	// Shifting by a number greater than the bit count is UB, mirroring the c++ convention
 	template<typename Num>
-	void shiftRight(UintBase<Num>& val, uint64_t shift)
+	constexpr void shiftRight(BigUintBase<Num>& val, uint64_t shift)
 	{
         auto& derVal = val.derived();
         if constexpr (Num::size() == 1) {
@@ -60,14 +267,20 @@ namespace xtd::math {
             auto bitShift = shift % Num::limbBitSize();
 
             auto it = derVal.begin();
-            for(; it < derVal.end() - limbShift - 1; ++it) {
-                auto correspond = it + limbShift;
-                *it = *correspond >> bitShift;
-                *it |= *(correspond + 1) << (Num::limbBitSize() - bitShift);
-            }
-            auto correspond = it + limbShift;
-            *it = *correspond >> bitShift;
-            ++it;
+
+			if(bitShift == 0) {
+				for(; it < derVal.end() - limbShift; ++it) *it = *(it + limbShift);
+			}
+			else {
+				for(; it < derVal.end() - limbShift - 1; ++it) {
+					auto correspond = it + limbShift;
+					*it = *correspond >> bitShift;
+					*it |= *(correspond + 1) << (Num::limbBitSize() - bitShift);
+				}
+				auto correspond = it + limbShift;
+				*it = *correspond >> bitShift;
+				++it;
+			}
             for(; it < derVal.end(); ++it) *it = 0;
         }
 	}
@@ -80,7 +293,7 @@ namespace xtd::math {
 	};
 
 	template<typename Left, typename Right>
-	CompareResult compare(const UintBase<Left>& l, const UintBase<Right>& r) {
+	constexpr CompareResult compare(const BigUintBase<Left>& l, const BigUintBase<Right>& r) {
 		auto& derL = l.derived();
 		auto& derR = r.derived();
 		size_t i;
@@ -108,14 +321,12 @@ namespace xtd::math {
 	}
 
 	template<typename Left, typename Right>
-	requires (sizeof(typename Left::ValueType) == sizeof(typename Right::ValueType))
-	using BiggerNum = std::conditional_t<Left::size() >= Right::size(), Left, Right>;
+	using BiggerNum = std::conditional_t<Left::byteCount() >= Right::byteCount(), Left, Right>;
 
 	template<typename Left, typename Right>
-	requires std::same_as<typename Left::ValueType, typename Right::ValueType>
-	std::pair<BiggerNum<Left, Right>, bool> add(const UintBase<Left>& l, const UintBase<Right>& r, bool carry = 0) {
-		BiggerNum<Left, Right> result;
-		using ValueType = typename Left::ValueType;
+	constexpr std::pair<BiggerNum<Left, Right>, bool> add(const StaticBigNumBase<Left>& l, const StaticBigNumBase<Right>& r, bool carry = 0) {
+		BiggerNum<Left, Right> result = {};
+		using ValueType = typename BiggerNum<Left, Right>::ValueType;
 		auto& derL = l.derived();
 		auto& derR = r.derived();
 
@@ -126,26 +337,26 @@ namespace xtd::math {
 		if constexpr (Left::size() > Right::size()) {
 			for (; itR < derR.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, *itR, carry);
-			for (; itL < derL.end(); itL++)
+			for (; itL < derL.end(); itL++, itRes++)
 				std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, ValueType(0), carry);
 		}
 		else if constexpr (Left::size() < Right::size()) {
 			for (; itL < derL.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, *itR, carry);
-			for (; itR < derR.end(); itR++)
+			for (; itR < derR.end(); itR++, itRes++)
 				std::tie(*itRes, carry) = xtd::math::addWithCarry(ValueType(0),*itR,  carry);
 		}
 		else {
 			for (; itL < derL.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, *itR, carry);
 		}
-		return std::make_pair<BiggerNum<Left, Right>, bool>(result, carry);
+		return std::pair<BiggerNum<Left, Right>, bool>(result, carry);
 	}
 
 	template<typename Left, typename Right>
 	requires std::same_as<typename Left::ValueType, typename Right::ValueType>
-	std::pair<BiggerNum<Left, Right>, bool> subtract(const UintBase<Left>& l, const UintBase<Right>& r, bool borrow = 0) {
-		BiggerNum<Left, Right> result;
+	constexpr std::pair<BiggerNum<Left, Right>, bool> subtract(const StaticBigNumBase<Left>& l, const StaticBigNumBase<Right>& r, bool borrow = 0) {
+		BiggerNum<Left, Right> result = {};
 		using ValueType = typename Left::ValueType;
 		auto& derL = l.derived();
 		auto& derR = r.derived();
@@ -157,194 +368,238 @@ namespace xtd::math {
 		if constexpr (Left::size() > Right::size()) {
 			for (; itR < derR.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, *itR, borrow);
-			for (; itL < derL.end(); itL++)
+			for (; itL < derL.end(); itL++, itRes++)
 				std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, ValueType(0), borrow);
 		}
 		else if constexpr (Left::size() < Right::size()) {
 			for (; itL < derL.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, *itR, borrow);
-			for (; itR < derR.end(); itR++)
+			for (; itR < derR.end(); itR++, itRes++)
 				std::tie(*itRes, borrow) = xtd::math::subWithBorrow(ValueType(0), *itR, borrow);
 		}
 		else {
 			for (; itL < derL.end(); itL++, itR++, itRes++)
 				std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, *itR, borrow);
 		}
-		return std::make_pair<BiggerNum<Left, Right>, bool>(result, borrow);
+		return std::pair<BiggerNum<Left, Right>, bool>(result, borrow);
 	}
 
-	// template<typename ContainerLeft, typename ContainerRight>
-	// requires (std::is_unsigned_v<typename ContainerLeft::ValueType> 
-	// 	&& std::is_unsigned_v<typename ContainerRight::ValueType> &&
-	// 	sizeof(typename ContainerLeft::ValueType) == sizeof(typename ContainerRight::ValueType))
-	// BiggerArray<ContainerLeft, ContainerRight> multiply(const ContainerLeft& x, const ContainerRight& y)
-	// {
-	// 	BiggerArray<ContainerLeft, ContainerRight> result;
-	// 	using ValueType = typename ContainerLeft::ValueType;
-	// 	if constexpr (ContainerLeft::size() > ContainerRight::size()) {
-	// 		for (size_t i = 0; i < ContainerRight::size(); ++i)
-	// 		{
-	// 			ValueType carry = 0;
-	// 			for (size_t j = 0; j < ContainerLeft::size() - i; ++j)
-	// 			{
-	// 				auto [res, carryInternal] = xtd::math::mult(y[i], x[j]);
-	// 				std::tie(result[i + j], carry) = xtd::math::addWithBigCarry(result[i + j], res, carry);
-	// 				carry += carryInternal;
-	// 			}
-	// 		}
-	// 	}
-	// 	else {
-	// 		for (size_t i = 0; i < ContainerLeft::size(); ++i)
-	// 		{
-	// 			ValueType carry = 0;
-	// 			for (size_t j = 0; j < ContainerRight::size() - i; ++j)
-	// 			{
-	// 				auto [res, carryInternal] = xtd::math::mult(x[i], y[j]);
-	// 				std::tie(result[i + j], carry) = xtd::math::addWithBigCarry(result[i + j], res, carry);
-	// 				carry += carryInternal;
-	// 			}
-	// 		}
-	// 	}
-	// 	return result;
-	// }
+	template<typename Left, std::integral Right>
+	constexpr std::pair<Left, bool> add(const StaticBigNumBase<Left>& l, Right r, bool carry = 0) {
+		Left result;
+		using ValueType = typename Left::ValueType;
+		auto& derL = l.derived();
 
-	// template<typename ContainerLeft, typename ContainerRight>
-	// requires (std::is_unsigned_v<typename ContainerLeft::ValueType> 
-	// 	&& std::is_unsigned_v<typename ContainerRight::ValueType> &&
-	// 	sizeof(typename ContainerLeft::ValueType) == sizeof(typename ContainerRight::ValueType))
-	// struct DivModResult {
-	// 	BiggerArray<ContainerLeft, ContainerRight> remainder;
-	// 	BiggerArray<ContainerLeft, ContainerRight> quotient;
-	// };
+		auto itL = derL.begin();
+		auto itRes = result.begin();
 
-	// template<typename ContainerLeft, typename ContainerRight>
-	// requires (std::is_unsigned_v<typename ContainerLeft::ValueType> &&
-	// 	std::is_unsigned_v<typename ContainerRight::ValueType> &&
-	// 	sizeof(typename ContainerLeft::ValueType) ==
-	// 	sizeof(typename ContainerRight::ValueType))
-	// DivModResult<ContainerLeft, ContainerRight> divMod(const ContainerLeft& x, const ContainerRight& y)
-	// {
-	// 	using ValueType = typename ContainerLeft::ValueType;
+		std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, r, carry);
+		++itL;
+		++itRes;
+		for(;carry && itL < derL.end(); ++itL, ++itRes) {
+			std::tie(*itRes, carry) = xtd::math::addWithCarry(*itL, ValueType(0), carry);
+		}
+		for(;itL < derL.end(); ++itL, ++itRes) *itRes = *itL;
+		return std::pair<Left, bool>(result, carry);
+	}
 
-	// 	constexpr size_t N = ContainerRight::size();
+	template<typename Left, std::integral Right>
+	constexpr std::pair<Left, bool> subtract(const StaticBigNumBase<Left>& l, Right r, bool borrow = 0) {
+		Left result;
+		using ValueType = typename Left::ValueType;
+		auto& derL = l.derived();
 
-	// 	DivModResult<ContainerLeft, ContainerRight> res{};
+		auto itL = derL.begin();
+		auto itRes = result.begin();
 
-	// 	size_t n = N;
+		std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, r, borrow);
+		++itL;
+		++itRes;
+		for(;borrow && itL < derL.end(); ++itL, ++itRes) {
+			std::tie(*itRes, borrow) = xtd::math::subWithBorrow(*itL, ValueType(0), borrow);
+		}
+		for(;itL < derL.end(); ++itL, ++itRes) *itRes = *itL;
+		return std::pair<Left, bool>(result, borrow);
+	}
 
-	// 	while (n > 0 && y[n - 1] == 0)
-	// 		--n;
+	template<typename Left, typename Right>
+	requires std::same_as<typename Left::ValueType, typename Right::ValueType>
+	constexpr std::pair<BiggerNum<Left, Right>, typename Left::ValueType> multiply(const StaticBigNumBase<Left>& l, const StaticBigNumBase<Right>& r) {
+		BiggerNum<Left, Right> result = {};
+		auto& derL = l.derived();
+		auto& derR = r.derived();
 
-	// 	if (n == 0)
-	// 		throw std::runtime_error("division by zero");
+		auto itR = derR.begin();
+		auto itL = derL.begin();
+		auto itRes = result.begin();
+		typename Left::ValueType carry = 0;
 
-	// 	// normalization
-	// 	ValueType shift = countLeadingZeroes(y[n - 1]);
+		if constexpr (Left::size() > Right::size()) {
+			for (; itR < derR.end(); ++itR, ++itRes)
+			{
+				carry = 0;
+				itL = derL.begin();
+				for (; itL < derL.end(); ++itL, ++itRes)
+				{
+					auto [res, carryInternal] = xtd::math::mult(*itL, *itR);
+					std::tie(*itRes, carry) = xtd::math::addWithBigCarry(*itRes, res, carry);
+					carry += carryInternal;
+				}
+			}
+		}
+		else {
+			for (; itL < derL.end(); ++itL, ++itRes)
+			{
+				carry = 0;
+				itR = derR.begin();
+				for (; itR < derR.end(); ++itR, ++itRes)
+				{
+					auto [res, carryInternal] = xtd::math::mult(*itL, *itR);
+					std::tie(*itRes, carry) = xtd::math::addWithBigCarry(*itRes, res, carry);
+					carry += carryInternal;
+				}
+			}
+		}
+		return std::pair<BiggerNum<Left, Right>, typename Left::ValueType>(result, carry);
+	}
 
-	// 	BiggerArray<ContainerLeft, ContainerRight> u = x;
-	// 	BiggerArray<ContainerLeft, ContainerRight> v = y;
+	template<typename Left, std::integral Right>
+	constexpr std::pair<Left, typename Left::ValueType> multiply(const StaticBigNumBase<Left>& l, Right r) {
+		Left result = {};
+		auto& derL = l.derived();
 
-	// 	shiftThisLeftOneLimb(u, shift);
-	// 	shiftThisLeftOneLimb(v, shift);
+		auto itL = derL.begin();
+		auto itRes = result.begin();
+		typename Left::ValueType carry = 0;
 
-	// 	xtd::containers::Array<ValueType,
-	// 		BiggerArray<ContainerLeft, ContainerRight>::size() + 1> un{};
+		for (; itL < derL.end(); ++itL, ++itRes)
+		{
+			auto [res, carryInternal] = xtd::math::mult(*itL, r);
+			std::tie(*itRes, carry) = xtd::math::addWithBigCarry(*itRes, res, carry);
+			carry += carryInternal;
+		}
+		return std::pair<Left, typename Left::ValueType>(result, carry);
+	}
 
-	// 	for (size_t i = 0; i < u.size(); ++i)
-	// 		un[i] = u[i];
+	template<typename Left, typename Right>
+	requires std::same_as<typename Left::ValueType, typename Right::ValueType>
+	struct DivModResult {
+		BiggerNum<Left, Right> remainder;
+		BiggerNum<Left, Right> quotient;
+	};
 
-	// 	un.back() = 0;
+	template<typename Left, typename Right>
+	requires std::same_as<typename Left::ValueType, typename Right::ValueType>
+	constexpr DivModResult<Left, Right> divMod(const BigUintBase<Left>& l, const BigUintBase<Right>& r)
+	{
+		using ValueType = typename Left::ValueType;
 
-	// 	size_t m = u.size() - n;
+		constexpr size_t N = Right::size();
 
-	// 	for (size_t j = m; j != std::numeric_limits<size_t>::max(); --j)
-	// 	{
-	// 		//-----------------------------------------
-	// 		// D3: estimate quotient
-	// 		//-----------------------------------------
+		DivModResult<Left, Right> res = {};
 
-	// 		auto [ qhat, rhat ] = xtd::math::divMod(un[j+n], un[j+n-1], v[n-1]);
+		size_t n = N;
 
-	// 		if (qhat == std::numeric_limits<uint64_t>::max())
-	// 			qhat--;
+		while (n > 0 && r[n - 1] == 0)
+			--n;
 
-	// 		if (n > 1)
-	// 		{
-	// 			while (true)
-	// 			{
-	// 				auto [plo, phi] = xtd::math::mult(qhat, v[n-2]);					
-	// 				if (!xtd::math::compareGreater(phi, plo, rhat, un[j+n-2]))
-	// 					break;
+		if (n == 0) throw std::runtime_error("division by zero");
 
-	// 				qhat--;
+		// normalization
+		ValueType shift = countLeadingZeroes(r[n - 1]);
 
-	// 				auto [sum, carry] = xtd::math::addWithCarry(rhat, v[n-1], 0);
-	// 				rhat = sum;
+		BiggerNum<Left, Right> u = l;
+		BiggerNum<Left, Right> v = r;
 
-	// 				if (carry)
-	// 					break;
-	// 			}
-	// 		}
+		shiftLeft(u, shift);
+		shiftLeft(v, shift);
 
-	// 		//-----------------------------------------
-	// 		// D4: multiply and subtract
-	// 		//-----------------------------------------
+		xtd::containers::Array<ValueType, BiggerNum<Left, Right>::size() + 1> un{};
 
-	// 		ValueType borrow = 0;
+		for (size_t i = 0; i < u.size(); ++i)
+			un[i] = u[i];
 
-	// 		for (size_t i = 0; i < n; ++i)
-	// 		{
-	// 			auto [plo, phi] = xtd::math::mult(qhat, v[i]);
+		un.back() = 0;
 
-	// 			auto s1 = xtd::math::subWithBigBorrow(un[i+j], plo, borrow);
-	// 			auto s2 = xtd::math::subWithBorrow(s1.diff, phi, 0);
+		size_t m = u.size() - n;
 
-	// 			un[i+j] = s1.first;
+		for (size_t j = m; j != std::numeric_limits<size_t>::max(); --j)
+		{
+			//-----------------------------------------
+			// D3: estimate quotient
+			//-----------------------------------------
 
-	// 			borrow = s1.second + s2.second;
-	// 		}
+			auto [ qhat, rhat ] = xtd::math::divMod(un[j+n], un[j+n-1], v[n-1]);
 
-	// 		bool negative;
-	// 		std::tie(un[j+n], negative) = xtd::math::subWithBorrow(un[j+n], borrow, 0);
+			if (qhat == std::numeric_limits<uint64_t>::max())
+				qhat--;
 
-	// 		//-----------------------------------------
-	// 		// D5: correction
-	// 		//-----------------------------------------
+			if (n > 1)
+			{
+				while (true)
+				{
+					auto [plo, phi] = xtd::math::mult(qhat, v[n-2]);					
+					if (!xtd::math::compareGreater(phi, plo, rhat, un[j+n-2]))
+						break;
 
-	// 		if (negative)
-	// 		{
-	// 			qhat--;
+					qhat--;
 
-	// 			ValueType carry = 0;
+					auto [sum, carry] = xtd::math::addWithCarry(rhat, v[n-1], 0);
+					rhat = sum;
 
-	// 			for (size_t i = 0; i < n; ++i) {
-	// 				std::tie(un[i+j], carry) = xtd::math::addWithBigCarry(un[i+j], v[i], carry);
-	// 			}
+					if (carry) break;
+				}
+			}
 
-	// 			std::tie(un[j+n], std::ignore) = xtd::math::addWithCarry(un[j+n], carry, 0);
-	// 		}
+			//-----------------------------------------
+			// D4: multiply and subtract
+			//-----------------------------------------
 
-	// 		res.quotient[j] = qhat;
-	// 	}
+			ValueType borrow = 0;
 
-	// 	//-----------------------------------------
-	// 	// remainder
-	// 	//-----------------------------------------
+			for (size_t i = 0; i < n; ++i)
+			{
+				auto [plo, phi] = xtd::math::mult(qhat, v[i]);
 
-	// 	for (size_t i = 0; i < n; ++i)
-	// 		res.remainder[i] = un[i];
+				auto s1 = xtd::math::subWithBigBorrow(un[i+j], plo, borrow);
+				auto s2 = xtd::math::subWithBorrow(s1.diff, phi, 0);
 
-	// 	shiftThisRightOneLimb(res.remainder, shift);
+				un[i+j] = s1.first;
 
-	// 	return res;
-	// }
+				borrow = s1.second + s2.second;
+			}
 
+			bool negative;
+			std::tie(un[j+n], negative) = xtd::math::subWithBorrow(un[j+n], borrow, 0);
 
-	// template<typename LeftNum, typename RightNum>
-	// inline constexpr auto operator+(const UintBase<LeftNum>& left, const UintBase<RightNum>& right) noexcept {
-    //     auto& leftDer = left.derived();
-    //     auto& rightDer = right.derived();
+			//-----------------------------------------
+			// D5: correction
+			//-----------------------------------------
 
-	// 	return 1;
-	// }
+			if (negative)
+			{
+				qhat--;
+
+				ValueType carry = 0;
+
+				for (size_t i = 0; i < n; ++i) {
+					std::tie(un[i+j], carry) = xtd::math::addWithBigCarry(un[i+j], v[i], carry);
+				}
+
+				std::tie(un[j+n], std::ignore) = xtd::math::addWithCarry(un[j+n], carry, 0);
+			}
+
+			res.quotient[j] = qhat;
+		}
+
+		//-----------------------------------------
+		// remainder
+		//-----------------------------------------
+
+		for (size_t i = 0; i < n; ++i) res.remainder[i] = un[i];
+
+		shiftRight(res.remainder, shift);
+
+		return res;
+	}
 }

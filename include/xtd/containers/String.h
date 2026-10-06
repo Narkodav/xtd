@@ -1,5 +1,6 @@
 #pragma once
 #include "xtd/containers/Vector.h"
+#include "xtd/containers/StringView.h"
 
 #include <concepts>
 #include <type_traits>
@@ -317,6 +318,8 @@ namespace xtd::containers {
             ::new (_end) ValueType('\0');
             return;
         }
+
+        Span<const ValueType> view() const { return this->subspan(); }
 
     private:
 

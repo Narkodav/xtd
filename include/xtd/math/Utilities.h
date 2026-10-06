@@ -1,4 +1,5 @@
 #pragma once
+#include <concepts>
 #include <cstdlib>
 #include <cstdint>
 #include <type_traits>
@@ -43,81 +44,23 @@ namespace xtd::math {
 		return { low, high };
 	}
 
-	static inline std::pair<uint64_t, uint64_t> divModFallback(uint64_t high, uint64_t low, uint64_t divisor) {
+	static inline std::pair<uint64_t, uint64_t> divModFallback(uint64_t hi, uint64_t lo, uint64_t divisor) {
 		//std::pair<uint64_t, uint64_t> res;
 		// Handle division by zero
-		if (divisor == 0) {
-			// Division by zero - behavior is undefined, return 0 and remainder 0
+		if (divisor == 0 || hi >= divisor) {
+			// Division by zero or hi > divisor - behavior is undefined, return 0 and remainder 0
 			return {0, 0};
 		}
 		
-		// Special case: if high < divisor, we can use standard 64-bit division
-		if (high < divisor) {
-			//uint64_t quotient;
-			
-			// Combine high and low into a 128-bit number and divide
-			// Using binary long division algorithm
-			uint64_t remainder_high = high;
-			uint64_t result = 0;
-			
-			for (int i = 0; i < 64; i++) {
-				// Shift result left by 1
-				result <<= 1;
-				
-				// Shift the high bit of low into remainder_high
-				remainder_high = (remainder_high << 1) | ((low >> 63) & 1);
-				low <<= 1;
-				
-				// If remainder_high >= divisor, subtract and set result bit
-				if (remainder_high >= divisor) {
-					remainder_high -= divisor;
-					result |= 1;
-				}
-			}
-			
-			return {result, remainder_high};
+		uint64_t q = 0, r = hi;
+		for (int i = 0; i < 64; ++i) {
+			bool top = r >> 63;
+			r = (r << 1) | (lo >> 63);
+			lo <<= 1;
+			q <<= 1;
+			if (top || r >= divisor) { r -= divisor; q |= 1; }
 		}
-		else {
-			// When high >= divisor, we need full 128-bit division
-			// Using binary long division algorithm for 128 bits
-			
-			uint64_t result = 0;
-			
-			// Combine high and low into a 128-bit number by shifting and adding bits
-			// Process all 128 bits
-			for (int i = 0; i < 128; i++) {
-				// Shift result left by 1
-				result <<= 1;
-				
-				// Get the most significant bit of the current dividend
-				uint64_t msb = (high >> 63) & 1;
-				
-				// Shift the 128-bit dividend left by 1
-				high = (high << 1) | ((low >> 63) & 1);
-				low <<= 1;
-				
-				// Check if we can subtract divisor from high
-				// For the first 64 bits, we use high as the remainder
-				// For the last 64 bits, we need to be careful about overflow
-				
-				if (i < 64) {
-					// First 64 bits: high contains the working remainder
-					if (high >= divisor) {
-						high -= divisor;
-						result |= 1;
-					}
-				} else {
-					// Last 64 bits: high might be large, but we can still compare
-					// We need to handle the case where high >= divisor
-					if (high >= divisor || (high == divisor && msb)) {
-						high -= divisor;
-						result |= 1;
-					}
-				}
-			}
-			
-			return {result, high};
-		}
+		return { q, r };
 	}
 
 	//helper struct to get the next greater sized type for example if T = uint16_t, NextSizedInteger::Type = uint32_t
@@ -142,8 +85,7 @@ namespace xtd::math {
 		using Type = uint64_t;
 	};
 
-	template <typename T>
-		requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline bool compareGreater(T hiLeft, T loLeft, T hiRight, T loRight) {		
 		if constexpr (sizeof(T) == 8) {
 	#if defined(__SIZEOF_INT128__)
@@ -154,11 +96,13 @@ namespace xtd::math {
 			return hiLeft > hiRight || ((hiLeft == hiRight) && (loLeft > loRight));
 	#endif
 		}
-		static const size_t bits = sizeof(T) * 8;
-		using WideT = typename NextSizedInteger<T>::Type;
-		WideT left = (static_cast<WideT>(hiLeft) << bits) | loLeft;
-		WideT right = (static_cast<WideT>(hiRight) << bits) | loRight;
-		return left > right;
+		else {
+			static const size_t bits = sizeof(T) * 8;
+			using WideT = typename NextSizedInteger<T>::Type;
+			WideT left = (static_cast<WideT>(hiLeft) << bits) | loLeft;
+			WideT right = (static_cast<WideT>(hiRight) << bits) | loRight;
+			return left > right;
+		}
 	}
 
 	template <typename T>
@@ -194,7 +138,7 @@ namespace xtd::math {
 	// ================== Addition with carry ==================
 	template <typename T>
 	requires std::is_unsigned_v<T>
-	static inline std::pair<T, T> addWithCarry(T a, T b, bool carry) // returns a pair where first is result and second is carry
+	static inline std::pair<T, bool> addWithCarry(T a, T b, bool carry) // returns a pair where first is result and second is carry
 	{
 		// ---------------- MSVC intrinsics ----------------
 	#if defined(_MSC_VER) && !defined(__SIZEOF_INT128__)
@@ -219,8 +163,8 @@ namespace xtd::math {
 		// ---------------- Fallback: GCC / Clang builtins ----------------
 	#elif defined(__GNUC__) || defined(__clang__)
 			T res;
-			auto carryIntermediate = __builtin_uaddll_overflow(a, b, &res);
-			carry = __builtin_uaddll_overflow(res, static_cast<T>(carry), &res) | carryIntermediate;
+			auto carryIntermediate = __builtin_add_overflow(a, b, &res);
+			carry = __builtin_add_overflow(res, static_cast<T>(carry), &res) | carryIntermediate;
 			return { res, carry };
 	#else
 			// ---------------- Branchless fallback ----------------
@@ -250,7 +194,7 @@ namespace xtd::math {
 			// ---------------- Branchless fallback ----------------
 			auto [ sum1, carry1 ] = addWithCarry(a, b, 0);
 			auto [ sum2, carry2 ] = addWithCarry(sum1, carry, 0);
-			return { sum2, carry1 + carry2 };
+			return { sum2, T(carry1) + T(carry2) };
 	#endif
 		}
 		else {
@@ -264,7 +208,7 @@ namespace xtd::math {
 	// ================== Subtraction with borrow ==================
 	template <typename T>
 	requires std::is_unsigned_v<T>
-	static inline std::pair<T, T> subWithBorrow(T a, T b, bool borrow) // returns a pair where first is result and second is borrow
+	static inline std::pair<T, bool> subWithBorrow(T a, T b, bool borrow) // returns a pair where first is result and second is borrow
 	{
 		// ---------------- MSVC intrinsics ----------------
 	#if defined(_MSC_VER) && !defined(__clang__)
@@ -282,16 +226,10 @@ namespace xtd::math {
 
 		// ---------------- GCC / Clang builtins ----------------
 	#if defined(__GNUC__) || defined(__clang__)
-		if constexpr (sizeof(T) == 8) {
+		{
 			T res;
-			auto borrowIntermediate = __builtin_usubll_overflow(a, b, &res);
-			borrow = __builtin_usubll_overflow(res, static_cast<T>(borrow), &res) | borrowIntermediate;
-			return { res, borrow };
-		}
-		else if constexpr (sizeof(T) == 4) {
-			T res;
-			auto borrowIntermediate = __builtin_usub_overflow(a, b, &res);
-			borrow = __builtin_usub_overflow(res, static_cast<T>(borrow), &res) | borrowIntermediate;
+			auto borrowIntermediate = __builtin_sub_overflow(a, b, &res);
+			borrow = __builtin_sub_overflow(res, static_cast<T>(borrow), &res) | borrowIntermediate;
 			return { res, borrow };
 		}
 	#endif
@@ -309,11 +247,10 @@ namespace xtd::math {
 	{
 		auto [ res1, borrow1 ] = subWithBorrow(a, b, 0);
 		auto [ res2, borrow2 ] = subWithBorrow(res1, borrow, 0);
-		return { res2, borrow1 + borrow2 };
+		return { res2, T(borrow1) + T(borrow2) };
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline T shiftRight(T hi, T lo, uint8_t shift) // returns low
 	{
 		// ---------------- MSVC intrinsics ----------------
@@ -326,12 +263,11 @@ namespace xtd::math {
 	#endif
 
 		// ---------------- Branchless fallback ----------------
-		T res = (lo >> shift) | (hi << (sizeof(T) - shift));
-		return res;
+		constexpr unsigned bits = sizeof(T) * 8;
+		return static_cast<T>((lo >> shift) | (hi << (bits - shift)));
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline T shiftLeft(T hi, T lo, uint8_t shift) // returns high
 	{
 		// ---------------- MSVC intrinsics ----------------
@@ -344,37 +280,32 @@ namespace xtd::math {
 	#endif
 
 		// ---------------- Branchless fallback ----------------
-		T res = (lo >> (sizeof(T) - shift)) | (hi << shift);
-		return res;
+		constexpr unsigned bits = sizeof(T) * 8;
+		return static_cast<T>((hi << shift) | (lo >> (bits - shift)));
 	}
 
 	// Convenience wrappers around std utilities
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline uint8_t countLeadingZeroes(T num) {
 		return std::countl_zero(num);
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline uint8_t countLeadingOnes(T num) {
 		return std::countl_one(num);
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline uint8_t countRightZeroes(T num) {
 		return std::countr_zero(num);
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline uint8_t countRightOnes(T num) {
 		return std::countr_one(num);
 	}
 
-	template <typename T>
-	requires std::is_unsigned_v<T>
+	template <std::unsigned_integral T>
 	static inline std::pair<T, T> divMod(T hi, T lo, T divisor) // returns pair where first is quotient and second is remainder
 	{
 		if constexpr (sizeof(T) == 8) {
@@ -384,7 +315,7 @@ namespace xtd::math {
 			return res;
 	#elif defined(__SIZEOF_INT128__)
 			std::pair<T, T> res;
-			__uint128_t divident = static_cast<__uint128_t>(hi << 64) | lo;			
+			__uint128_t divident = (static_cast<__uint128_t>(hi) << 64) | lo;			
 			res.first = divident / divisor;
 			res.second = divident % divisor;
 			return res;
@@ -396,96 +327,12 @@ namespace xtd::math {
 			static const size_t bits = sizeof(T) * 8;
 			using WideT = typename NextSizedInteger<T>::Type;
 			std::pair<T, T> res;
-			WideT divident = static_cast<WideT>(hi << bits) | lo;			
+			WideT divident = (static_cast<WideT>(hi) << bits) | lo;			
 			res.first = divident / divisor;
 			res.second = divident % divisor;
 			return res;
 		}
 	}
-
-	template<size_t s_digitCount>
-	static inline constexpr size_t estimateByteCount() {
-		return (s_digitCount * 3321928ULL / 1000000ULL + 7) / 8;
-	}
-
-	template<typename T, size_t s_digitCount>
-	static inline constexpr size_t estimateLimbCount() {
-		return (estimateByteCount<s_digitCount>() - 1) / sizeof(T) + 1;
-	}
-
-	template<typename T, size_t N>
-		requires std::is_unsigned_v<T>
-	xtd::containers::Array<T, N> stringToNumArray(xtd::containers::Span<const char> str, xtd::containers::Array<T, N>& limbs) {
-
-		{
-			T digit = str[0] - '0';
-			limbs[0] = digit;
-		}
-
-		for (size_t i = 1; i < str.size(); ++i) {
-			if (!std::isdigit(str[i])) {
-				return {0};
-			}
-
-			// Multiply current number by 10
-			auto temp = multiply(limbs, xtd::containers::Array<T, 1>{ 10 });
-
-			// Add current digit
-			T digit = str[i] - '0';
-			if (digit != 0) {
-				temp = add(temp, xtd::containers::Array<T, 1>{ digit });
-			}
-
-			limbs = temp;
-		}
-
-		return limbs;
-	}
-
-    template<typename LimbDst, auto sizeDst, typename LimbSrc, auto sizeSrc>
-    void convertNum(xtd::containers::Array<LimbDst, sizeDst>& dst, const xtd::containers::Array<LimbSrc, sizeSrc>& src) {
-        if constexpr(sizeof(LimbDst) == sizeof(LimbSrc)) {
-            dst = src;
-        }
-        else if constexpr(sizeof(LimbDst) > sizeof(LimbSrc)) {
-            dst = {};
-            constexpr auto step = sizeof(LimbDst) / sizeof(LimbSrc);
-            constexpr size_t limit = dst.size() * step >= src.size() ? src.size() / step : dst.size();
-            for(size_t i = 0; i < limit; ++i) {
-                LimbDst limb;
-                for(size_t j = 0; j < step; ++j) {
-                    limb |= src[i * step + j] << (j * sizeof(LimbSrc) * 8);
-                }
-                dst[i] = limb;
-            }
-        }
-        else {
-            dst = {};
-            constexpr auto step = sizeof(LimbSrc) / sizeof(LimbDst);
-            constexpr size_t limit = dst.size() >= src.size() * step ? src.size() : dst.size() / step;
-            for(size_t i = 0; i < limit; ++i) {
-                for(size_t j = 0; j < step; ++j) {
-                    dst[i * step + j] = (src[i] >> (j * sizeof(LimbDst) * 8)) & ((LimbSrc(1) << (sizeof(LimbDst) * 8)) - 1);
-                }
-            }
-        }
-    }
-
-    template<typename LimbDst, auto sizeDst, typename LimbSrc>
-    void convertNum(xtd::containers::Array<LimbDst, sizeDst>& dst, const LimbSrc& src) {
-        if constexpr(sizeof(LimbDst) >= sizeof(LimbSrc)) {
-			dst = {};
-            dst[0] = src;
-        }
-        else {
-            dst = {};
-            constexpr auto step = sizeof(LimbSrc) / sizeof(LimbDst);
-            constexpr size_t limit = dst.size() >= step ? step : dst.size();
-			for(size_t i = 0; i < limit; ++i) {
-				dst[i] = src >> (i * sizeof(LimbDst) * 8) & ((LimbSrc(1) << (sizeof(LimbDst) * 8)) - 1);
-			}
-        }
-    }
 
 	template<typename T>
 	struct Base10Divisor {

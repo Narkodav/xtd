@@ -10,49 +10,56 @@ namespace xtd::containers {
 
     static constexpr size_t spanDynamicSize = std::numeric_limits<size_t>::max();
 
+    template<typename T, size_t _size = spanDynamicSize>
+    class Span;
+
     // Bolt this on to have span integration, Bases can be empty
     template<typename Derived, typename T, typename S, typename IC, typename... Bases>
     class SpanFunctions : public Bases... {
     private:
-        constexpr Derived& derived() { return static_cast<Derived*>(this); }
-        constexpr const Derived& derived() const { return static_cast<const Derived*>(this); }
+        constexpr Derived& derived() { return *static_cast<Derived*>(this); }
+        constexpr const Derived& derived() const { return *static_cast<const Derived*>(this); }
     public:
         using ValueType = T;
         using SizeType = S;
         using ConstIteratorType = IC;
 
-        auto subspan(ConstIteratorType&& begin, ConstIteratorType&& end) {
-            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin < derived().end(), "using iterators that dont blong to this span to make a subspan");
-            XTD_DEBUG_VERIFY(end >= derived().begin() && end < derived().end(), "using iterators that dont blong to this span to make a subspan");
+        constexpr auto subspan(ConstIteratorType&& begin, ConstIteratorType&& end) {
+            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
+            XTD_DEBUG_VERIFY(end >= derived().begin() && end <= derived().end(), "using iterators that dont blong to this span to make a subspan");
             return Span<ValueType>(begin, end); 
         }
-        auto subspan(SizeType pos, SizeType size) {
-            XTD_DEBUG_VERIFY(pos + size < derived().size(), "out of bounds while trying to make a subspan");
+        constexpr auto subspan(SizeType pos, SizeType size) {
+            XTD_DEBUG_VERIFY(pos + size <= derived().size(), "out of bounds while trying to make a subspan");
             auto begin = derived().begin() + pos;
             return Span<ValueType>(begin, begin + size); 
         }
 
-        auto subspan(ConstIteratorType begin, SizeType size) {
-            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin < derived().end(), "using iterators that dont blong to this span to make a subspan");
-            XTD_DEBUG_VERIFY(derived().begin() + size < derived().end(), "out of bounds size while trying to make a subspan");
+        constexpr auto subspan(ConstIteratorType begin, SizeType size) {
+            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
+            XTD_DEBUG_VERIFY(derived().begin() + size <= derived().end(), "out of bounds size while trying to make a subspan");
             return Span<ValueType>(begin, begin + size); 
         }
 
         template<SizeType size>
-        auto subspan(SizeType pos) {
-            XTD_DEBUG_VERIFY(pos + size < derived().size(), "out of bounds while trying to make a subspan");
+        constexpr auto subspan(SizeType pos) {
+            XTD_DEBUG_VERIFY(pos + size <= derived().size(), "out of bounds while trying to make a subspan");
             auto begin = derived().begin() + pos;
             return Span<ValueType, size>(begin); 
         }
         template<SizeType size>
-        auto subspan(ConstIteratorType begin) {
-            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin < derived().end(), "using iterators that dont blong to this span to make a subspan");
-            XTD_DEBUG_VERIFY(derived().begin() + size < derived().end(), "out of bounds size while trying to make a subspan");
+        constexpr auto subspan(ConstIteratorType begin) {
+            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
+            XTD_DEBUG_VERIFY(derived().begin() + size <= derived().end(), "out of bounds size while trying to make a subspan");
             return Span<ValueType, size>(begin); 
+        }
+
+        constexpr auto subspan() {
+            return Span<ValueType>(derived().begin(), derived().end());
         }
     };
 
-    template<typename T, size_t _size = spanDynamicSize>
+    template<typename T, size_t _size>
     class Span : public SpanFunctions<Span<T, _size>, T, size_t, ContiguousIteratorBase<const T>> {
     public:
         using ValueType = T;
@@ -77,6 +84,10 @@ namespace xtd::containers {
         template<ArrayContainerType C>
         constexpr Span(const C& other) noexcept requires(C::size() == _size) : _begin(other.data()) {}
 
+        template<std::size_t size>
+        requires(size >= _size)
+        constexpr Span(ValueType (&data)[size]) noexcept : _begin(data) {}
+
         template<ContiguousIteratorType IteratorT>
         constexpr Span(IteratorT begin) noexcept : _begin(begin) {}
 
@@ -97,11 +108,11 @@ namespace xtd::containers {
         constexpr inline PointerType data() { return _begin; }
         constexpr inline const PointerType data() const { return _begin; }
 
-        ValueType& back() { return end()[-1]; }
-        const ValueType& back() const { return end()[-1]; }
+        constexpr ValueType& back() { return end()[-1]; }
+        constexpr const ValueType& back() const { return end()[-1]; }
 
-        ValueType& front() { return _begin[0]; }
-        const ValueType& front() const { return _begin[0]; }
+        constexpr ValueType& front() { return _begin[0]; }
+        constexpr const ValueType& front() const { return _begin[0]; }
     };
 
     static_assert(ArrayContainerType<Span<int, 1>>, "Sized Span must satisfy ArrayContainerType");
@@ -137,6 +148,9 @@ namespace xtd::containers {
     
         constexpr Span(PointerType begin, SizeType size) noexcept : _begin(begin), _end(begin + size) {}
 
+        template<std::size_t size>
+        constexpr Span(ValueType (&data)[size]) noexcept : _begin(data), _end(data + size) {}
+
         constexpr inline ValueType& operator[](SizeType i) noexcept { return const_cast<ValueType&>(std::as_const(*this)[i]); }
         constexpr inline const ValueType& operator[](SizeType i) const noexcept {
             XTD_DEBUG_VERIFY(_begin + i < _end, "out of bounds access to Span data");
@@ -154,11 +168,11 @@ namespace xtd::containers {
         constexpr inline PointerType data() { return _begin; }
         constexpr inline const PointerType data() const { return _begin; }
 
-        ValueType& back() { return _end[-1]; }
-        const ValueType& back() const { return _end[-1]; }
+        constexpr ValueType& back() { return _end[-1]; }
+        constexpr const ValueType& back() const { return _end[-1]; }
 
-        ValueType& front() { return _begin[0]; }
-        const ValueType& front() const { return _begin[0]; }
+        constexpr ValueType& front() { return _begin[0]; }
+        constexpr const ValueType& front() const { return _begin[0]; }
     };
 
     static_assert(ContiguousContainerType<Span<int>>, "Span must satisfy ContiguousContainerType");
