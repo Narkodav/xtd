@@ -1,6 +1,7 @@
 #pragma once
 #include <concepts>
 #include <stdint.h>
+#include <utility>
 
 namespace xtd::containers {
     template<typename C>
@@ -79,5 +80,36 @@ namespace xtd::containers {
         typename I::ContiguousIteratorTag;
         { it + it } -> std::convertible_to<I>;
         { it - it } -> std::convertible_to<I>;
+    };
+
+    template <typename Node, typename T>
+    concept ListDataNodeType = requires(Node& node) {
+        {node.data()} -> std::convertible_to<T*>;
+        {node.value()} -> std::convertible_to<T&>;
+        {std::as_const(node).data()} -> std::convertible_to<const T*>;
+        {std::as_const(node).value()} -> std::convertible_to<const T&>;
+    };
+
+    template <typename Node>
+    concept ForwardListSentinelNodeType = requires(Node& node) {
+        {node.next()} -> std::convertible_to<Node*>;
+        {std::as_const(node).next()} -> std::convertible_to<const Node*>;
+    };
+
+    template <typename Node>
+    concept BidirectionalListSentinelNodeType = ForwardListSentinelNodeType<Node> && requires(Node& node) {
+        {node.prev()} -> std::convertible_to<Node*>;
+        {std::as_const(node).prev()} -> std::convertible_to<const Node*>;
+    };
+
+    template <typename Node, typename T>
+    concept ForwardListNodeType = ForwardListSentinelNodeType<Node> && ListDataNodeType<Node, T>;
+
+    template <typename Node, typename T>
+    concept BidirectionalListNodeType = BidirectionalListSentinelNodeType<Node> && ListDataNodeType<Node, T>;
+
+    template<typename G>
+    concept GrowthStrategyT = requires(G g, size_t cap) {
+        { g.grow(cap) } -> std::convertible_to<size_t>;
     };
 }

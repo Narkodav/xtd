@@ -1,7 +1,7 @@
 #pragma once
 #include "xtd/debug/Checks.h"
 #include "xtd/containers/Traits.h"
-#include "xtd/containers/Iterators.h"
+#include "xtd/containers/PointerIterators.h"
 
 #include <limits>
 #include <utility>
@@ -24,34 +24,30 @@ namespace xtd::containers {
         using SizeType = S;
         using ConstIteratorType = IC;
 
-        constexpr auto subspan(ConstIteratorType&& begin, ConstIteratorType&& end) {
-            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
-            XTD_DEBUG_VERIFY(end >= derived().begin() && end <= derived().end(), "using iterators that dont blong to this span to make a subspan");
+        constexpr auto subspan(ConstIteratorType begin, ConstIteratorType end) {
+            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont belong to this span to make a subspan");
+            XTD_DEBUG_VERIFY(end >= derived().begin() && end <= derived().end(), "using iterators that dont belong to this span to make a subspan");
+            XTD_DEBUG_VERIFY(begin <= end, "end iterator must be greater than or equal to the begin iterator");
             return Span<ValueType>(begin, end); 
         }
         constexpr auto subspan(SizeType pos, SizeType size) {
-            XTD_DEBUG_VERIFY(pos + size <= derived().size(), "out of bounds while trying to make a subspan");
-            auto begin = derived().begin() + pos;
-            return Span<ValueType>(begin, begin + size); 
+            return subspan(derived().begin() + pos, derived().begin() + pos + size);
         }
 
         constexpr auto subspan(ConstIteratorType begin, SizeType size) {
-            XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
-            XTD_DEBUG_VERIFY(derived().begin() + size <= derived().end(), "out of bounds size while trying to make a subspan");
-            return Span<ValueType>(begin, begin + size); 
+            return subspan(begin, begin + size);
         }
 
-        template<SizeType size>
-        constexpr auto subspan(SizeType pos) {
-            XTD_DEBUG_VERIFY(pos + size <= derived().size(), "out of bounds while trying to make a subspan");
-            auto begin = derived().begin() + pos;
-            return Span<ValueType, size>(begin); 
-        }
         template<SizeType size>
         constexpr auto subspan(ConstIteratorType begin) {
             XTD_DEBUG_VERIFY(begin >= derived().begin() && begin <= derived().end(), "using iterators that dont blong to this span to make a subspan");
             XTD_DEBUG_VERIFY(derived().begin() + size <= derived().end(), "out of bounds size while trying to make a subspan");
             return Span<ValueType, size>(begin); 
+        }
+
+        template<SizeType size>
+        constexpr auto subspan(SizeType pos) {
+            return subspan<size>(derived().begin() + pos);
         }
 
         constexpr auto subspan() {

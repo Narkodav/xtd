@@ -3,19 +3,16 @@
 #include "xtd/allocators/Traits.h"
 #include "xtd/debug/Checks.h"
 #include "xtd/containers/Traits.h"
-#include "xtd/containers/Iterators.h"
+#include "xtd/containers/PointerIterators.h"
 #include "xtd/containers/Span.h"
-#include "xtd/utility/Traits.h"
+#include "xtd/memory/Lifetime.h"
+#include "xtd/Macros.h"
+
 #include <concepts>
 #include <type_traits>
 #include <utility>
 
 namespace xtd::containers {
-    template<typename G>
-    concept GrowthStrategyT = requires(G g, size_t cap) {
-        { g.grow(cap) } -> std::convertible_to<size_t>;
-    };
-
     template<xtd::allocators::AllocatorT A, GrowthStrategyT G>
     struct VectorPolicy {
         using Alloc = A;
@@ -69,8 +66,8 @@ namespace xtd::containers {
         using Base = SpanFunctions<Self, ValueType, SizeType, ConstIteratorType>;
 
         struct Policy {
-            [[no_unique_address]] AllocatorType alloc;
-            [[no_unique_address]] GrowthType growth;
+            XTD_NO_UNIQUE_ADDRESS AllocatorType alloc;
+            XTD_NO_UNIQUE_ADDRESS GrowthType growth;
         };
 
         struct RawParts {
@@ -78,10 +75,10 @@ namespace xtd::containers {
             PointerType end;
             PointerType cap;
 
-            [[no_unique_address]] Policy policy;
+            XTD_NO_UNIQUE_ADDRESS Policy policy;
 
             void cleanup() {
-                for(auto* it = begin; it < end; ++it) it->~ValueType();
+                for(auto* it = begin; it < end; ++it) xtd::memory::destroyAt(it);
                 policy.alloc.deallocate(begin);
             }
         };
@@ -91,7 +88,7 @@ namespace xtd::containers {
         PointerType _end;
         PointerType _cap;
 
-        [[no_unique_address]] Policy _policy;
+        XTD_NO_UNIQUE_ADDRESS Policy _policy;
 
     public:
         Vector() requires(std::is_default_constructible_v<Policy>) : _policy(Policy()) {
@@ -180,7 +177,7 @@ namespace xtd::containers {
 
         RawParts release(Policy&& policy) {
             RawParts parts { _begin, _end, _cap, std::move(_policy) };
-            _policy = policy;
+            _policy = std::move(policy);
             init(alloc(0), 0, 0);
             return parts;
         }
@@ -230,22 +227,23 @@ namespace xtd::containers {
         template<typename... Args>
         IteratorType pushBack(Args&&... args) {
             if(_end >= _cap) migrate(_policy.growth.grow(size() + 1), size());
-            ::new (_end) ValueType(std::forward<Args>(args)...);
+            xtd::memory::constructAt(_end, std::forward<Args>(args)...);
             return IteratorType(_end++);
         }
 
-        //Push back without checking for capacity, used when the caller can guarantee the addition will fit
+        // Push back without checking for capacity, used when the caller can guarantee the addition will fit
+        // This also doesn't invalidate prior iterators
         template<typename... Args>
         IteratorType pushBackUnchecked(Args&&... args) {
             XTD_DEBUG_VERIFY(_end < _cap, "call to Vector::pushBackUnchecked with no capacity to spare");
-            ::new (_end) ValueType(std::forward<Args>(args)...);
+            xtd::memory::constructAt(_end, std::forward<Args>(args)...);
             return IteratorType(_end++);
         }
 
         IteratorType popBack() {
             XTD_DEBUG_VERIFY(_end > _begin, "call to Vector::popBack with zero size");
-            _end->~ValueType(); 
-            --_end; 
+            xtd::memory::destroyAt(_end);
+            --_end;
             return IteratorType(_end - 1); 
         }
 
@@ -261,17 +259,17 @@ namespace xtd::containers {
                 PointerType it = _begin;
                 PointerType newIt = newBegin;
                 for(; it < target; ++it, ++newIt) {
-                    constructAt(newIt, *it);
-                    it->~ValueType();
+                    xtd::memory::moveOrCopyTo(newIt, *it);
+                    xtd::memory::destroyAt(it);
                 }
                 
                 for(; b < e; ++b, ++newIt) {
-                    constructAt(newIt, *b);
+                    xtd::memory::moveOrCopyTo(newIt, *b);
                 }
 
                 for(; it < _end; ++it, ++newIt) {
-                    constructAt(newIt, *it);
-                    it->~ValueType();
+                    xtd::memory::moveOrCopyTo(newIt, *it);
+                    xtd::memory::destroyAt(it);
                 }
                 auto res = newBegin + target - _begin;
                 dealloc();
@@ -285,15 +283,15 @@ namespace xtd::containers {
                 PointerType itLast = itFirst + addition;
                 
                 for(; itLast >= _end; --itLast, --itFirst) {
-                    constructAt(itLast, *itFirst);
+                    xtd::memory::moveOrCopyTo(itLast, *itFirst);
                 }
                 for(; itFirst >= target; --itLast, --itFirst) {
-                    itLast->~ValueType();
-                    constructAt(itLast, *itFirst);
+                    xtd::memory::destroyAt(itLast);
+                    xtd::memory::moveOrCopyTo(itLast, *itFirst);
                 }
                 for(IteratorType src = e - 1; itLast >= target; --itLast, --src) {
-                    itLast->~ValueType();
-                    constructAt(itLast, *src);
+                    xtd::memory::destroyAt(itLast);
+                    xtd::memory::moveOrCopyTo(itLast, *src);
                 }
                 _end += addition;
             } else {
@@ -302,15 +300,15 @@ namespace xtd::containers {
                 PointerType itNewEnd = itFirst;
 
                 for(; itLast >= itNewEnd; --itLast, --itFirst) {
-                    constructAt(itLast, *itFirst);
+                    xtd::memory::moveOrCopyTo(itLast, *itFirst);
                 }
                 IteratorType src = e - 1;
                 for(; itLast >= _end; --itLast, --src) {
-                    constructAt(itLast, *src);
+                    xtd::memory::moveOrCopyTo(itLast, *src);
                 }
                 for(; itLast >= target; --itLast, --src) {
-                    itLast->~ValueType();
-                    constructAt(itLast, *src);
+                    xtd::memory::destroyAt(itLast);
+                    xtd::memory::moveOrCopyTo(itLast, *src);
                 }
                 _end += addition;
             }
@@ -327,22 +325,18 @@ namespace xtd::containers {
         void grow(SizeType newSize) {
             auto priorCap = capacity();
             if(priorCap >= newSize) {
-                for(auto it = _end; it < _begin + newSize; ++it) {
-                    ::new (it) ValueType();
-                }
+                for(auto it = _end; it < _begin + newSize; ++it) xtd::memory::constructAt(it);
                 _end = _begin + newSize;
                 return;
             }
             auto newCap = growSize(priorCap, newSize);
             auto itNew = migrate(newCap, newSize);
-            for(; itNew < _end; ++itNew) {
-                ::new (itNew) ValueType();
-            }
+            for(; itNew < _end; ++itNew) xtd::memory::constructAt(itNew);
         }
 
         void shrink(SizeType newSize) {
             auto newEnd = _begin + newSize;
-            for(auto it = newEnd; it < _end; ++it) it->~ValueType();
+            for(auto it = newEnd; it < _end; ++it) xtd::memory::destroyAt(it);
             _end = newEnd;
             return;
         }
@@ -368,8 +362,8 @@ namespace xtd::containers {
             PointerType itNew = newBegin;
             PointerType it = _begin;
             for(; it < _end; ++it, ++itNew) {
-                constructAt(itNew, *it);
-                it->~ValueType();
+                xtd::memory::moveOrCopyTo(itNew, *it);
+                xtd::memory::destroyAt(it);
             }
             dealloc();
             init(newBegin, s, cap);
@@ -377,15 +371,11 @@ namespace xtd::containers {
         }
 
         inline void clearData() {
-            for(auto* it = _begin; it < _end; ++it) {
-                it->~ValueType();
-            }
+            for(auto* it = _begin; it < _end; ++it) { xtd::memory::destroyAt(it); }
         }
 
         inline void copyFrom(PointerType src, size_t size) {
-            for(PointerType it; it < _begin + size; ++it, ++src) {
-                ::new (it) ValueType(*src);
-            }
+            for(PointerType it; it < _begin + size; ++it, ++src) { xtd::memory::copyTo(it, *src); }
         }
 
         static AllocatorType allocatorCopyConstruction(const AllocatorType& other) {
@@ -415,21 +405,6 @@ namespace xtd::containers {
                 static_assert(false, "GrowthType is not copy constructible and doesn't implement onCopyConstruction method");
             }
         }
-
-        template<typename Dst, typename Src>
-            requires std::is_constructible_v<Dst, const Src&> ||
-                    std::is_constructible_v<Dst, Src&&>
-        void constructAt(Dst* dst, Src& src) {
-            if constexpr (std::is_constructible_v<Dst, Src&&>) {
-                ::new (dst) Dst(std::move(src));
-            }
-            else if constexpr (std::is_constructible_v<Dst, const Src&>) {
-                ::new (dst) Dst(src);
-            }
-        }
-
-        template<typename Dst> requires(std::is_default_constructible_v<Dst>)
-        void constructAt(Dst* dst) { ::new (dst) Dst(); }
     };
 
     static_assert(VectorContainerType<Vector<int>>, "Vector must satisfy ContiguousContainerType");

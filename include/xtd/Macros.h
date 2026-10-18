@@ -22,3 +22,9 @@
 #else
   #define XTD_RESTRICT
 #endif
+
+#if defined(_MSC_VER)
+  #define XTD_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+  #define XTD_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif

@@ -1,6 +1,6 @@
 #pragma once
 #include "xtd/containers/Traits.h"
-#include "xtd/containers/Iterators.h"
+#include "xtd/containers/PointerIterators.h"
 #include "xtd/containers/Span.h"
 
 #include "xtd/debug/Checks.h"
