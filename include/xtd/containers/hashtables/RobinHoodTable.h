@@ -8,6 +8,69 @@
 
 namespace xtd::containers {
 
+    template<typename T>
+	class RobinHoodIteratorBase {
+	public:
+		using TableType = T;
+		using BucketType = typename TableType::BucketType;
+		using ValueType = typename BucketType::ValueType;
+		using PointerType = ValueType*;
+
+	private:
+		BucketType* _bucket;
+
+	public:
+		constexpr RobinHoodIteratorBase() noexcept = default;
+		constexpr RobinHoodIteratorBase(BucketType *bucket, TableType&) noexcept : _bucket(bucket) {
+			while(_bucket->unoccupied()) ++_bucket;
+		}
+
+		template <typename U>
+		requires std::convertible_to<const U *, BucketType *>
+		constexpr RobinHoodIteratorBase(U *bucket, TableType&) noexcept : _bucket(bucket) {
+			while(_bucket->unoccupied()) ++_bucket;
+		};
+
+		template <typename U>
+		requires std::convertible_to<const U *, ValueType *>
+		constexpr RobinHoodIteratorBase(RobinHoodIteratorBase<U> it) noexcept : _bucket(it.bucket()) {
+			while(_bucket->unoccupied()) ++_bucket;
+		};
+
+		template <typename U>
+		requires std::convertible_to<const U *, ValueType *>
+		constexpr RobinHoodIteratorBase operator=(RobinHoodIteratorBase<U> it) noexcept {
+			_bucket = it.bucket();
+		};
+
+		constexpr ValueType &operator*() const noexcept { return value(); }
+		constexpr ValueType *operator->() const noexcept { return data(); }
+		constexpr RobinHoodIteratorBase &operator++() noexcept {
+			++_bucket;
+			while(_bucket->unoccupied()) ++_bucket;
+			return *this;
+		}
+		constexpr RobinHoodIteratorBase operator++(int) noexcept {
+			RobinHoodIteratorBase temp = *this;
+			++_bucket;
+			while(_bucket->unoccupied()) ++_bucket;
+			return temp;
+		}
+
+		constexpr bool operator==(const RobinHoodIteratorBase &other) const noexcept { return _bucket == other._bucket; }
+		constexpr bool operator!=(const RobinHoodIteratorBase &other) const noexcept { return _bucket != other._bucket; }
+		constexpr bool operator<(const RobinHoodIteratorBase &other) const noexcept { return _bucket < other._bucket; }
+		constexpr bool operator<=(const RobinHoodIteratorBase &other) const noexcept { return _bucket <= other._bucket; }
+		constexpr bool operator>(const RobinHoodIteratorBase &other) const noexcept { return _bucket > other._bucket; }
+		constexpr bool operator>=(const RobinHoodIteratorBase &other) const noexcept { return _bucket >= other._bucket; }
+		constexpr ValueType* data() noexcept { return _bucket->data(); }
+		constexpr const ValueType* data() const noexcept { return _bucket->data(); };
+		constexpr ValueType* value() noexcept { return _bucket->value(); }
+		constexpr const ValueType* value() const noexcept { return _bucket->value(); };
+		constexpr BucketType* bucket() noexcept { return _bucket; }
+		constexpr const BucketType* bucket() const noexcept { return _bucket; };
+	};
+
 	template<typename S>
 	struct RobinHoodSentinelBucket {
 		using SizeType = S;
@@ -54,6 +117,9 @@ namespace xtd::containers {
 		using ComparatorType = typename Policy::ComparatorType;
 		using AllocatorType = typename Policy::AllocatorType;
 		using GrowthType = typename Policy::GrowthType;
+
+		using IteratorType = RobinHoodIteratorBase<BucketType>;
+		using ConstIteratorType = RobinHoodIteratorBase<const BucketType>;
 
         using Self = RobinHoodTable<ValueType, Policy, initialCapacity, loadThreshold>;
 

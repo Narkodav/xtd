@@ -13,6 +13,12 @@ xtd_headers = files(
     'include/xtd/containers/Span.h',
     'include/xtd/containers/Iterators.h',
     'include/xtd/containers/ByteArray.h',
+    'include/xtd/containers/UnorderedSet.h',
+    'include/xtd/containers/UnorderedMap.h',
+
+    # containers/hashtables
+    'include/xtd/containers/RobinHoodTable.h',
+    'include/xtd/containers/SwissTable.h',
 
     # memory
     'include/xtd/memory/Traits.h',
